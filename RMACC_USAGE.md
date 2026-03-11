@@ -30,15 +30,31 @@ cd GRAPE-Hamiltonian-Simulation
 
 CURC provides uv as a module — do not install it manually via curl.
 
+Creating the virtualenv directory is a lightweight operation and can be done
+on the login node. **Package installation (`uv pip install`) must run inside
+an interactive job** because it downloads and compiles packages, which is
+prohibited on login nodes.
+
+```bash
+# On the login node — create the venv directory only
+module load uv
+uv venv $UV_ENVS/grape
+```
+
+Then start an interactive compute job to install packages:
+
+```bash
+sinteractive --partition=amilan --ntasks=1 --cpus-per-task=2 \
+             --mem=4G --time=01:00:00 --account=rmacc-general
+```
+
+Once the interactive shell opens on a compute node:
+
 ```bash
 module load uv
-
-# Create a named environment (stored in /projects/$USER/software/uv/envs/grape)
-uv venv $UV_ENVS/grape
-
-# Activate and install dependencies
 source $UV_ENVS/grape/bin/activate
 uv pip install "jax[cpu]" optax dynamiqs jaxtyping matplotlib
+exit   # return to login node when done
 ```
 
 `$UV_ENVS` is set automatically by `module load uv` to
@@ -66,12 +82,32 @@ Check your available allocations:
 sacctmgr show assoc user=$USER format=account,partition
 ```
 
-## 5. Verify the setup (optional — runs on login node, takes ~5 seconds)
+The scripts already include `#SBATCH --qos=normal`, which is required for the
+`amilan` partition. Valid QoS options for `amilan`:
+
+| QoS | Max walltime | Max jobs/user |
+|-----|-------------|---------------|
+| `normal` | 1 day | 1000 |
+| `long` | 7 days | 200 |
+| `testing` | 1 hour | 5 |
+
+## 5. Verify the setup (optional — requires an interactive job)
+
+The check mode triggers JAX JIT compilation, which is compute-intensive and
+must not run on the login node. Start an interactive job first:
+
+```bash
+sinteractive --partition=amilan --ntasks=1 --cpus-per-task=2 \
+             --mem=4G --time=00:30:00 --account=rmacc-general
+```
+
+Then inside the interactive shell:
 
 ```bash
 module load uv
 source $UV_ENVS/grape/bin/activate
 python grape-curc-sim.py --mode check
+exit
 ```
 
 Expected output:

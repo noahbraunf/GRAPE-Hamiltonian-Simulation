@@ -2,6 +2,7 @@
 #SBATCH --job-name=grape_d4_agg
 #SBATCH --account=rmacc-general
 #SBATCH --partition=amilan
+#SBATCH --qos=normal
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
