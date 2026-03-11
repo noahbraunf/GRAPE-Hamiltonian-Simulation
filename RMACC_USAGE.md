@@ -118,9 +118,14 @@ Submit the aggregate job after the array job finishes. Use SLURM's dependency sy
 so it starts automatically:
 
 ```bash
-# Replace 12345 / 12346 with the job IDs printed when you ran sbatch above
-sbatch --dependency=afterok:12345 run_d2_aggregate.slurm
-sbatch --dependency=afterok:12346 run_d4_aggregate.slurm
+# Capture job IDs to use with --dependency
+D2_JID=$(sbatch --parsable run_d2.slurm)
+D4_JID=$(sbatch --parsable run_d4.slurm)
+echo "d=2 job: $D2_JID   d=4 job: $D4_JID"
+
+# Then submit aggregate jobs with automatic dependency
+sbatch --dependency=afterok:$D2_JID run_d2_aggregate.slurm
+sbatch --dependency=afterok:$D4_JID run_d4_aggregate.slurm
 ```
 
 Or submit manually once `squeue` shows no remaining array tasks:
@@ -141,6 +146,7 @@ results/d4/d4_sweep.npz
 
 ```bash
 # Run these commands from your local machine
+# Adjust /scratch/alpine/<username> to /projects/<allocation>/<username> if needed
 scp <username>@login.rc.colorado.edu:/scratch/alpine/<username>/GRAPE-Hamiltonian-Simulation/results/d2/d2_sweep.npz .
 scp <username>@login.rc.colorado.edu:/scratch/alpine/<username>/GRAPE-Hamiltonian-Simulation/results/d4/d4_sweep.npz .
 ```
@@ -194,8 +200,8 @@ The `amilan` partition allows up to 24 hours.
 Check which `T_idx` files are missing:
 
 ```bash
-for i in $(seq -w 0 49); do
-  f="results/d2/d2_T${i}.npz"
+for i in $(seq 0 49); do
+  f="results/d2/d2_T$(printf '%04d' $i).npz"
   [[ -f "$f" ]] || echo "missing: T_idx=$i  ($f)"
 done
 ```
