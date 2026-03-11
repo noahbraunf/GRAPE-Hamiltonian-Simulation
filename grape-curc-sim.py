@@ -245,32 +245,125 @@ def sweep_fidelity(
 
 
 if __name__ == "__main__":
-    U_swap = jnp.zeros((4, 4), dtype=jnp.complex64)
-    for i in range(2):
-        for j in range(2):
-            U_swap = U_swap.at[j * 2 + i, i * 2 + j].set(1.0)
+    import argparse, os, glob
 
-    generators_t0, labels_t0 = build_pauli_basis()
-    M_t0 = 20  # timesteps
-    T_t0 = 1.0  # total evolution time (arbitrary when Omega is unbounded)
+    parser = argparse.ArgumentParser(description="Qudit-mediated SWAP GRAPE sweep")
+    parser.add_argument("--mode", choices=["run", "aggregate", "check"], default="run")
+    # Physics
+    parser.add_argument("--d_qudit", type=int, default=2, choices=[2, 3, 4, 5, 6])
+    # Sweep grid
+    parser.add_argument("--T_idx", type=int, default=0,
+                        help="Index into T_values array (overridden by SLURM_ARRAY_TASK_ID)")
+    parser.add_argument("--T_min", type=float, default=0.3)
+    parser.add_argument("--T_max", type=float, default=12.0)
+    parser.add_argument("--n_T", type=int, default=50)
+    # Optimizer
+    parser.add_argument("--M", type=int, default=40, help="Number of time steps")
+    parser.add_argument("--n_restarts", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=4000)
+    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--seed", type=int, default=42)
+    # I/O
+    parser.add_argument("--output_dir", type=str, default="results")
+    args = parser.parse_args()
 
-    print(f"Tier 0: {len(labels_t0)} generators, M = {M_t0}, T = {T_t0}")
-    print(f"Total parameters: {len(labels_t0)} x {M_t0} = {M_t0 * len(labels_t0)}")
+    # ── check mode ────────────────────────────────────────────────────────────
+    if args.mode == "check":
+        for d in [2, 4]:
+            gens, labels = build_qudit_mediated_basis(d)
+            target = build_swap_qudit_target(d)
+            n, N = gens.shape[0], gens.shape[-1]
+            max_err = float(max(
+                jnp.max(jnp.abs(gens[k] - gens[k].conj().T)) for k in range(n)
+            ))
+            print(f"d={d}: {n} generators, dim={N}, max Hermitian err={max_err:.2e}")
+            assert N == 4 * d
+        print("All checks passed.")
+        raise SystemExit(0)
 
-    omegas_t0, fid_t0, hist_t0, _ = optimize_gate(
-        generators_t0,
-        U_swap,
-        n_steps=M_t0,
-        time=T_t0,
-        n_restarts=50,
-        epochs=3000,
-        lr=0.01,
-    )
+    # ── run mode ──────────────────────────────────────────────────────────────
+    if args.mode == "run":
+        import numpy as np
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.semilogy(hist_t0)
-    ax.set(xlabel="Epoch", ylabel="Infidelity (1 - F)")
-    ax.set_title(f"Tier 0: Two-Qubit SWAP (unbounded) — F = {fid_t0:.10f}")
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
+        # SLURM_ARRAY_TASK_ID overrides --T_idx when running on cluster
+        T_idx = int(os.environ.get("SLURM_ARRAY_TASK_ID", args.T_idx))
+        T_values = jnp.linspace(args.T_min, args.T_max, args.n_T)
+        T = float(T_values[T_idx])
+
+        generators, labels = build_qudit_mediated_basis(args.d_qudit)
+        U_target = build_swap_qudit_target(args.d_qudit)
+        n_generators = generators.shape[0]
+
+        print(f"[run] d={args.d_qudit}  T_idx={T_idx}  T={T:.4f}  "
+              f"n_gen={n_generators}  M={args.M}  "
+              f"restarts={args.n_restarts}  epochs={args.epochs}")
+
+        best_params, fidelity, _best_hist, all_loss_histories = optimize_gate(
+            generators, U_target,
+            n_steps=args.M,
+            time=T,
+            n_restarts=args.n_restarts,
+            epochs=args.epochs,
+            lr=args.lr,
+            seed=args.seed,
+        )
+        print(f"[run] done  F={fidelity:.8f}")
+
+        os.makedirs(args.output_dir, exist_ok=True)
+        out_path = os.path.join(
+            args.output_dir, f"d{args.d_qudit}_T{T_idx:04d}.npz"
+        )
+        np.savez(
+            out_path,
+            T=T,
+            T_idx=T_idx,
+            fidelity=fidelity,
+            best_omegas=np.array(best_params),
+            all_loss_histories=np.array(all_loss_histories),
+            d_qudit=args.d_qudit,
+            M=args.M,
+            n_generators=n_generators,
+        )
+        print(f"[run] saved → {out_path}")
+
+    # ── aggregate mode ────────────────────────────────────────────────────────
+    elif args.mode == "aggregate":
+        import numpy as np
+
+        pattern = os.path.join(args.output_dir, f"d{args.d_qudit}_T*.npz")
+        files = sorted(glob.glob(pattern))
+        if not files:
+            raise FileNotFoundError(f"No files matching {pattern}")
+        print(f"[aggregate] found {len(files)} files for d={args.d_qudit}")
+
+        # Load and sort by T_idx
+        records = [np.load(f) for f in files]
+        records.sort(key=lambda r: int(r["T_idx"]))
+
+        # Collect generator labels once
+        _, labels = build_qudit_mediated_basis(args.d_qudit)
+
+        out_path = os.path.join(args.output_dir, f"d{args.d_qudit}_sweep.npz")
+        np.savez(
+            out_path,
+            T_values=np.array([r["T"] for r in records]),
+            fidelities=np.array([r["fidelity"] for r in records]),
+            best_omegas=np.stack([r["best_omegas"] for r in records]),
+            all_loss_histories=np.stack([r["all_loss_histories"] for r in records]),
+            generator_labels=np.array(labels, dtype=object),
+            d_qudit=args.d_qudit,
+            M=int(records[0]["M"]),
+            n_generators=int(records[0]["n_generators"]),
+            n_restarts=args.n_restarts,
+            epochs=args.epochs,
+            lr=args.lr,
+            T_min=args.T_min,
+            T_max=args.T_max,
+            n_T=args.n_T,
+        )
+        print(f"[aggregate] saved → {out_path}")
+        data = np.load(out_path, allow_pickle=True)
+        print(f"  T_values shape   : {data['T_values'].shape}")
+        print(f"  fidelities shape : {data['fidelities'].shape}")
+        print(f"  best_omegas shape: {data['best_omegas'].shape}")
+        print(f"  all_loss_hist    : {data['all_loss_histories'].shape}")
