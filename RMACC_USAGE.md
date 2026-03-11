@@ -52,7 +52,7 @@ and replace:
 with your actual Alpine allocation, e.g.:
 
 ```
-#SBATCH --account=ucb-general
+#SBATCH --account=rmacc-general
 ```
 
 Check your available allocations:
