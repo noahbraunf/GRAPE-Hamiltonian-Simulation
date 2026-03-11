@@ -219,7 +219,7 @@ def optimize_gate(
         keys
     )  # all_losses: (n_restarts, epochs)
     best_id = jnp.argmin(all_losses[:, -1])
-    return all_params[best_id], 1.0 - all_losses[best_id, -1], all_losses[best_id]
+    return all_params[best_id], 1.0 - all_losses[best_id, -1], all_losses[best_id], all_losses
 
 
 @jax.jit
@@ -236,7 +236,7 @@ def sweep_fidelity(
     verbose=False,
 ):
     def optimize_for_T(T):
-        _, fid, _ = optimize_gate(
+        _, fid, _, _ = optimize_gate(
             generators, U_target, M, T, n_restarts, epochs, lr, init_scale
         )
         return fid
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     print(f"Tier 0: {len(labels_t0)} generators, M = {M_t0}, T = {T_t0}")
     print(f"Total parameters: {len(labels_t0)} x {M_t0} = {M_t0 * len(labels_t0)}")
 
-    omegas_t0, fid_t0, hist_t0 = optimize_gate(
+    omegas_t0, fid_t0, hist_t0, _ = optimize_gate(
         generators_t0,
         U_swap,
         n_steps=M_t0,
