@@ -1,9 +1,5 @@
-from enum import Enum
-
-import dynamiqs as dq
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import optax
 from jax import lax
 
@@ -219,7 +215,12 @@ def optimize_gate(
         keys
     )  # all_losses: (n_restarts, epochs)
     best_id = jnp.argmin(all_losses[:, -1])
-    return all_params[best_id], 1.0 - all_losses[best_id, -1], all_losses[best_id], all_losses
+    return (
+        all_params[best_id],
+        1.0 - all_losses[best_id, -1],
+        all_losses[best_id],
+        all_losses,
+    )
 
 
 @jax.jit
@@ -252,8 +253,12 @@ if __name__ == "__main__":
     # Physics
     parser.add_argument("--d_qudit", type=int, default=2, choices=[2, 3, 4, 5, 6])
     # Sweep grid
-    parser.add_argument("--T_idx", type=int, default=0,
-                        help="Index into T_values array (overridden by SLURM_ARRAY_TASK_ID)")
+    parser.add_argument(
+        "--T_idx",
+        type=int,
+        default=0,
+        help="Index into T_values array (overridden by SLURM_ARRAY_TASK_ID)",
+    )
     parser.add_argument("--T_min", type=float, default=0.3)
     parser.add_argument("--T_max", type=float, default=12.0)
     parser.add_argument("--n_T", type=int, default=50)
@@ -273,9 +278,9 @@ if __name__ == "__main__":
             gens, labels = build_qudit_mediated_basis(d)
             target = build_swap_qudit_target(d)
             n, N = gens.shape[0], gens.shape[-1]
-            max_err = float(max(
-                jnp.max(jnp.abs(gens[k] - gens[k].conj().T)) for k in range(n)
-            ))
+            max_err = float(
+                max(jnp.max(jnp.abs(gens[k] - gens[k].conj().T)) for k in range(n))
+            )
             print(f"d={d}: {n} generators, dim={N}, max Hermitian err={max_err:.2e}")
             assert N == 4 * d
         print("All checks passed.")
@@ -294,12 +299,15 @@ if __name__ == "__main__":
         U_target = build_swap_qudit_target(args.d_qudit)
         n_generators = generators.shape[0]
 
-        print(f"[run] d={args.d_qudit}  T_idx={T_idx}  T={T:.4f}  "
-              f"n_gen={n_generators}  M={args.M}  "
-              f"restarts={args.n_restarts}  epochs={args.epochs}")
+        print(
+            f"[run] d={args.d_qudit}  T_idx={T_idx}  T={T:.4f}  "
+            f"n_gen={n_generators}  M={args.M}  "
+            f"restarts={args.n_restarts}  epochs={args.epochs}"
+        )
 
         best_params, fidelity, _best_hist, all_loss_histories = optimize_gate(
-            generators, U_target,
+            generators,
+            U_target,
             n_steps=args.M,
             time=T,
             n_restarts=args.n_restarts,
@@ -310,9 +318,7 @@ if __name__ == "__main__":
         print(f"[run] done  F={fidelity:.8f}")
 
         os.makedirs(args.output_dir, exist_ok=True)
-        out_path = os.path.join(
-            args.output_dir, f"d{args.d_qudit}_T{T_idx:04d}.npz"
-        )
+        out_path = os.path.join(args.output_dir, f"d{args.d_qudit}_T{T_idx:04d}.npz")
         np.savez(
             out_path,
             T=T,
