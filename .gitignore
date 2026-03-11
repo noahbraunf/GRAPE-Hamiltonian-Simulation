@@ -1,0 +1,14 @@
+.venv/
+.DS_Store
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+.idea/
+.nvimsocket
+results/
+.harper-dictionary.txt
