@@ -340,8 +340,25 @@ if __name__ == "__main__":
         records = [np.load(f) for f in files]
         records.sort(key=lambda r: int(r["T_idx"]))
 
+        T_values_expected = jnp.linspace(args.T_min, args.T_max, args.n_T)
+        for r in records:
+            idx = int(r["T_idx"])
+            expected_T = float(T_values_expected[idx])
+            actual_T = float(r["T"])
+            if abs(actual_T - expected_T) > 1e-4:
+                raise ValueError(
+                    f"T_idx={idx}: file has T={actual_T:.6f} but expected "
+                    f"T={expected_T:.6f} from --T_min={args.T_min} "
+                    f"--T_max={args.T_max} --n_T={args.n_T}. "
+                    f"Ensure all run files used the same sweep parameters."
+                )
+
         # Collect generator labels once
         _, labels = build_qudit_mediated_basis(args.d_qudit)
+
+        M_vals = {int(r["M"]) for r in records}
+        if len(M_vals) != 1:
+            raise ValueError(f"Inconsistent --M across run files: {M_vals}")
 
         out_path = os.path.join(args.output_dir, f"d{args.d_qudit}_sweep.npz")
         np.savez(
