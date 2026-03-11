@@ -10,9 +10,9 @@
 #SBATCH --error=logs/d4_agg_%j.err
 
 module purge
-module load python/3.11
+module load uv
 
-source .venv/bin/activate
+source $UV_ENVS/grape/bin/activate
 
 python grape-curc-sim.py \
     --mode aggregate \

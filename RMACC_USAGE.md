@@ -26,19 +26,24 @@ git clone <repo_url> GRAPE-Hamiltonian-Simulation
 cd GRAPE-Hamiltonian-Simulation
 ```
 
-## 3. Install uv and set up the environment
+## 3. Set up the Python environment (one-time)
+
+CURC provides uv as a module — do not install it manually via curl.
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env   # adds uv to PATH
+module load uv
 
-# Create the virtual environment (only needed once)
-uv sync --frozen
+# Create a named environment (stored in /projects/$USER/software/uv/envs/grape)
+uv venv $UV_ENVS/grape
+
+# Activate and install dependencies
+source $UV_ENVS/grape/bin/activate
+uv pip install "jax[cpu]" optax dynamiqs jaxtyping matplotlib
 ```
 
-This creates `.venv/` inside the project directory. The SLURM scripts activate it via
-`source .venv/bin/activate` — always submit SLURM jobs from the project root so the
-relative path resolves correctly.
+`$UV_ENVS` is set automatically by `module load uv` to
+`/projects/$USER/software/uv/envs`. The SLURM scripts activate this same
+environment via `source $UV_ENVS/grape/bin/activate`.
 
 ## 4. Edit SLURM scripts — set your allocation code
 
@@ -64,7 +69,8 @@ sacctmgr show assoc user=$USER format=account,partition
 ## 5. Verify the setup (optional — runs on login node, takes ~5 seconds)
 
 ```bash
-source .venv/bin/activate
+module load uv
+source $UV_ENVS/grape/bin/activate
 python grape-curc-sim.py --mode check
 ```
 
@@ -180,8 +186,12 @@ else:
 
 **Module not found / import error**
 
-Confirm `.venv` is activated. The SLURM scripts do this automatically, but if running
-manually: `source .venv/bin/activate`
+Confirm the environment is activated. The SLURM scripts do this automatically, but if
+running manually:
+```bash
+module load uv
+source $UV_ENVS/grape/bin/activate
+```
 
 **Job fails immediately with a JAX error**
 

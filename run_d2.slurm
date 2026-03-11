@@ -11,9 +11,9 @@
 #SBATCH --error=logs/d2_%A_%a.err
 
 module purge
-module load python/3.11
+module load uv
 
-source .venv/bin/activate
+source $UV_ENVS/grape/bin/activate
 
 export JAX_PLATFORM_NAME=cpu
 export XLA_FLAGS="--xla_cpu_multi_thread_eigen_intra_op_parallelism=1"

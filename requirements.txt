@@ -1,0 +1,5 @@
+"jax[cpu]"
+optax
+dynamiqs
+jaxtyping
+matplotlib
