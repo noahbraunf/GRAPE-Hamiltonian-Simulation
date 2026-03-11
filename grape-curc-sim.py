@@ -3,8 +3,6 @@ import jax.numpy as jnp
 import optax
 from jax import lax
 
-from lbfgs_b import lbfgsb
-
 
 def generate_spin_operators(levels: int):
     s = (levels - 1) / 2
@@ -178,42 +176,30 @@ def optimize_gate(
     initial_scale=1.0,
     seed=42,
 ):
-    n_generators = generators.shape[0]
-    optimizer = lbfgsb(
-        lower=-jnp.ones((n_steps, n_generators)),
-        upper=jnp.ones((n_steps, n_generators)),
-        learning_rate=lr,
-    )
+    optimizer = optax.adam(lr)
 
-    def loss_fun(omegas: jax.Array):
-        U = evolve_H(
-            omegas,
-            generators,
-            time,
-        )
+    def loss_fun(thetas: jax.Array):
+        # Cosine reparametrisation: omega_j = cos(theta_j) ∈ [-1, 1], smooth and unconstrained
+        U = evolve_H(jnp.cos(thetas), generators, time)
         return 1.0 - gate_fidelity(U, U_target)
 
     def single_restart(key):
-        params = initial_scale * jax.random.normal(key, (n_steps, n_generators))
-        opt_state = optimizer.init(params)
+        thetas = initial_scale * jax.random.normal(key, (n_steps, generators.shape[0]))
+        opt_state = optimizer.init(thetas)
 
         def step(carry, _):
-            params, opt_state = carry
-            loss, grads = jax.value_and_grad(loss_fun)(params)
-            updates, new_opt_state = optimizer.update(
-                grads, opt_state, params, value=loss, value_fn=loss_fun, grad=grads
-            )
-            return (optax.apply_updates(params, updates), new_opt_state), loss
+            thetas, opt_state = carry
+            loss, grads = jax.value_and_grad(loss_fun)(thetas)
+            updates, new_opt_state = optimizer.update(grads, opt_state)
+            return (optax.apply_updates(thetas, updates), new_opt_state), loss
 
-        (final_params, _), losses = lax.scan(
-            step, (params, opt_state), None, length=epochs
+        (final_thetas, _), losses = lax.scan(
+            step, (thetas, opt_state), None, length=epochs
         )
-        return final_params, losses
+        return jnp.cos(final_thetas), losses
 
     keys = jax.random.split(jax.random.PRNGKey(seed), n_restarts)
-    all_params, all_losses = jax.vmap(single_restart)(
-        keys
-    )  # all_losses: (n_restarts, epochs)
+    all_params, all_losses = jax.vmap(single_restart)(keys)  # (n_restarts, epochs)
     best_id = jnp.argmin(all_losses[:, -1])
     return (
         all_params[best_id],
@@ -249,7 +235,7 @@ if __name__ == "__main__":
     import argparse, os, glob
 
     parser = argparse.ArgumentParser(description="Qudit-mediated SWAP GRAPE sweep")
-    parser.add_argument("--mode", choices=["run", "aggregate", "check"], default="run")
+    parser.add_argument("--mode", choices=["run", "aggregate", "check", "analyze"], default="run")
     # Physics
     parser.add_argument("--d_qudit", type=int, default=2, choices=[2, 3, 4, 5, 6])
     # Sweep grid
@@ -272,7 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="results")
     args = parser.parse_args()
 
-    # ── check mode ────────────────────────────────────────────────────────────
+    # check mode
     if args.mode == "check":
         for d in [2, 4]:
             gens, labels = build_qudit_mediated_basis(d)
@@ -286,7 +272,7 @@ if __name__ == "__main__":
         print("All checks passed.")
         raise SystemExit(0)
 
-    # ── run mode ──────────────────────────────────────────────────────────────
+    # run mode
     if args.mode == "run":
         import numpy as np
 
@@ -331,8 +317,7 @@ if __name__ == "__main__":
             n_generators=n_generators,
         )
         print(f"[run] saved → {out_path}")
-
-    # ── aggregate mode ────────────────────────────────────────────────────────
+    # aggregate mode
     elif args.mode == "aggregate":
         import numpy as np
 
@@ -390,3 +375,61 @@ if __name__ == "__main__":
         print(f"  fidelities shape : {data['fidelities'].shape}")
         print(f"  best_omegas shape: {data['best_omegas'].shape}")
         print(f"  all_loss_hist    : {data['all_loss_histories'].shape}")
+
+    # analyze mode
+    elif args.mode == "analyze":
+        import numpy as np
+
+        sweep_path = os.path.join(args.output_dir, f"d{args.d_qudit}_sweep.npz")
+        data = np.load(sweep_path, allow_pickle=True)
+        print(f"[analyze] loaded {sweep_path}")
+
+        generators, _ = build_qudit_mediated_basis(args.d_qudit)
+        T_values = jnp.array(data["T_values"])
+        best_omegas = jnp.array(data["best_omegas"])  # (n_T, M, n_gen)
+        M = int(data["M"])
+        M_half = M // 2
+
+        # Compute U_half for every T simultaneously via vmap
+        def compute_U_half(omega, T):
+            return evolve_H(omega[:M_half], generators, T * M_half / M)
+
+        U_halves = jax.vmap(compute_U_half)(best_omegas, T_values)  # (n_T, N, N)
+        print(f"[analyze] U_halves shape={U_halves.shape}  M_half={M_half}")
+
+        out = dict(T_values=np.array(T_values), U_halves=np.array(U_halves))
+
+        if args.d_qudit == 2:
+            # SWAP(q1,anc) ⊗ I(q2) in q1⊗q2⊗anc basis: |i,j,k⟩ → |k,j,i⟩
+            rows = [k*4 + j*2 + i for i in range(2) for j in range(2) for k in range(2)]
+            cols = [i*4 + j*2 + k for i in range(2) for j in range(2) for k in range(2)]
+            U_swap_q1_anc = jnp.zeros((8, 8), dtype=jnp.complex64).at[
+                jnp.array(rows), jnp.array(cols)
+            ].set(1.0)
+            half_fids = jax.vmap(lambda U: gate_fidelity(U, U_swap_q1_anc))(U_halves)
+            out["half_fidelities_vs_swap_q1_anc"] = np.array(half_fids)
+            best_T = float(T_values[jnp.argmax(half_fids)])
+            print(f"[analyze] max half-fidelity vs SWAP(q1,anc)⊗I(q2): "
+                  f"{float(half_fids.max()):.6f}  at T={best_T:.4f}")
+
+        elif args.d_qudit == 4:
+            # q1⊗q2⊗anc indexing: |i,j,k⟩ → 8i + 4j + k
+            idx_j0 = jnp.array([8*i + k     for i in range(2) for k in range(4)])
+            idx_j1 = jnp.array([8*i + 4 + k for i in range(2) for k in range(4)])
+
+            def block_analysis(U):
+                V_j0 = U[jnp.ix_(idx_j0, idx_j0)]
+                V_j1 = U[jnp.ix_(idx_j1, idx_j1)]
+                return V_j0, jnp.max(jnp.abs(V_j0 - V_j1))
+
+            V_halves, block_diffs = jax.vmap(block_analysis)(U_halves)
+            out["V_halves"] = np.array(V_halves)         # (n_T, 8, 8) q1⊗anc unitary
+            out["half_block_diffs"] = np.array(block_diffs)  # (n_T,)
+            MT_BOUND = 2 * 3 * float(jnp.pi) / 4
+            print(f"[analyze] MT bound 2×3π/4 = {MT_BOUND:.4f}")
+            print(f"[analyze] min block diff {float(block_diffs.min()):.6f}  "
+                  f"at T={float(T_values[jnp.argmin(block_diffs)]):.4f}")
+
+        out_path = os.path.join(args.output_dir, f"d{args.d_qudit}_analysis.npz")
+        np.savez(out_path, **out)
+        print(f"[analyze] saved → {out_path}")

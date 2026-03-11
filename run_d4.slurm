@@ -14,7 +14,7 @@
 module purge
 module load uv
 
-source $UV_ENVS/grape/bin/activate
+source "$UV_ENVS/grape/bin/activate"
 
 export JAX_PLATFORM_NAME=cpu
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
@@ -22,11 +22,11 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 mkdir -p results/d4 logs
 
 python grape-curc-sim.py \
-    --mode run \
-    --d_qudit 4 \
-    --T_min 0.3 --T_max 15.0 --n_T 50 \
-    --M 40 \
-    --n_restarts 50 \
-    --epochs 4000 \
-    --lr 0.005 \
-    --output_dir results/d4
+  --mode run \
+  --d_qudit 4 \
+  --T_min 0.3 --T_max 15.0 --n_T 50 \
+  --M 40 \
+  --n_restarts 50 \
+  --epochs 4000 \
+  --lr 0.005 \
+  --output_dir results/d4

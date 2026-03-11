@@ -14,7 +14,7 @@
 module purge
 module load uv
 
-source $UV_ENVS/grape/bin/activate
+source "$UV_ENVS/grape/bin/activate"
 
 export JAX_PLATFORM_NAME=cpu
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
