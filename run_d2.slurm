@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=grape_d2
-#SBATCH --account=YOUR_PROJECT_CODE
+#SBATCH --account=rmacc-general
 #SBATCH --partition=amilan
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -22,12 +22,12 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 mkdir -p results/d2 logs
 
 python grape-curc-sim.py \
-    --mode run \
-    --d_qudit 2 \
-    --T_min 0.3 --T_max 12.0 --n_T 50 \
-    --M 40 \
-    --n_restarts 50 \
-    --epochs 4000 \
-    --lr 0.005 \
-    --output_dir results/d2
+  --mode run \
+  --d_qudit 2 \
+  --T_min 0.3 --T_max 12.0 --n_T 50 \
+  --M 40 \
+  --n_restarts 50 \
+  --epochs 4000 \
+  --lr 0.005 \
+  --output_dir results/d2
 # SLURM_ARRAY_TASK_ID is read automatically inside the script

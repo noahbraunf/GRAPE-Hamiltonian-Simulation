@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=grape_d4_agg
-#SBATCH --account=YOUR_PROJECT_CODE
+#SBATCH --account=rmacc-general
 #SBATCH --partition=amilan
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
