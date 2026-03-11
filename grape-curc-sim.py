@@ -184,8 +184,8 @@ def optimize_gate(
 ):
     n_generators = generators.shape[0]
     optimizer = lbfgsb(
-        lower=-jnp.ones((n_generators,)),
-        upper=jnp.ones((n_generators,)),
+        lower=-jnp.ones((n_steps, n_generators)),
+        upper=jnp.ones((n_steps, n_generators)),
         learning_rate=lr,
     )
 
