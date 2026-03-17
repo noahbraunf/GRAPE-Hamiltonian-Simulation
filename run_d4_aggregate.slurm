@@ -19,7 +19,7 @@ source "$UV_ENVS/grape/bin/activate"
 python grape-curc-sim.py \
   --mode aggregate \
   --d_qudit 4 \
-  --T_min 0.3 --T_max 15.0 --n_T 500 \
+  --T_min 0.3 --T_max 15.0 --n_T 20 \
   --n_restarts 50 \
   --epochs 4000 \
   --output_dir results/d4_opnorm
@@ -33,7 +33,7 @@ python grape-curc-sim.py \
 python grape-curc-sim.py \
   --mode aggregate \
   --d_qudit 4 \
-  --T_min 0.3 --T_max 15.0 --n_T 500 \
+  --T_min 0.3 --T_max 15.0 --n_T 20 \
   --n_restarts 50 \
   --epochs 4000 \
   --output_dir results/d4_trotter
