@@ -15,15 +15,30 @@ module load uv
 
 source "$UV_ENVS/grape/bin/activate"
 
+# --- op-norm results ---
 python grape-curc-sim.py \
   --mode aggregate \
   --d_qudit 2 \
-  --T_min 0.3 --T_max 12.0 --n_T 50 \
+  --T_min 0.3 --T_max 12.0 --n_T 500 \
   --n_restarts 50 \
   --epochs 4000 \
-  --output_dir results/d2
+  --output_dir results/d2_opnorm
 
 python grape-curc-sim.py \
   --mode analyze \
   --d_qudit 2 \
-  --output_dir results/d2
+  --output_dir results/d2_opnorm
+
+# --- trotter+cosine results ---
+python grape-curc-sim.py \
+  --mode aggregate \
+  --d_qudit 2 \
+  --T_min 0.3 --T_max 12.0 --n_T 500 \
+  --n_restarts 50 \
+  --epochs 4000 \
+  --output_dir results/d2_trotter
+
+python grape-curc-sim.py \
+  --mode analyze \
+  --d_qudit 2 \
+  --output_dir results/d2_trotter

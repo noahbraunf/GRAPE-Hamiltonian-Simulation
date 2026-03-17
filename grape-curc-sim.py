@@ -42,10 +42,10 @@ def build_pauli_basis():
 def build_qudit_mediated_basis(d_qudit: int):
     """Hermitian generators for two qubits coupled to a d_qudit-level qudit.
 
-    Hilbert space: qubit1 ⊗ qubit2 ⊗ qudit.
-    Includes all sigma_a ⊗ I ⊗ S_b and I ⊗ sigma_a ⊗ S_b terms,
-    excluding the global identity (a="I" AND b="I").
-    Deduplicates I ⊗ I ⊗ S_b terms that appear for both qubit slots.
+    Hilbert space: qubit1 (x) qubit2 (x) qudit.
+    Includes all sigma_a (x) I (x) S_b and I (x) sigma_a (x) S_b terms,
+    excluding the global identity (I_2 (x) I_2 (x) I_d).
+    Deduplicates I (x) I (x) S_b terms that appear for both qubit slots.
     Yields 27 generators for all supported d values.
     """
     I2 = jnp.eye(2, dtype=jnp.complex64)
@@ -55,22 +55,35 @@ def build_qudit_mediated_basis(d_qudit: int):
         spin_ops = generate_spin_operators(d_qudit)
 
     generators, labels = [], []
-    seen: set[str] = set()
+    seen = set()
 
     for qubit_idx in [1, 2]:
         for a, sigma_a in pauli_operators.items():
             for b, S_b in spin_ops.items():
                 if a == "I" and b == "I":
-                    continue  # global identity — trivial
-                # I⊗I⊗S_b is qudit-only; same regardless of qubit_idx
-                label = f"I⊗I⊗S{b}" if a == "I" else f"q{qubit_idx}:σ{a}⊗S{b}"
-                if label in seen:
+                    continue  # global identity does not change state
+                # I (x) I (x) S_b is qudit-only; same regardless of qubit_idx
+                if qubit_idx == 1:
+                    label = (
+                        f"$I \\otimes I \\otimes S{b}$"
+                        if a == "I"
+                        else f"$\\sigma^{a}_{qubit_idx} \\otimes I \\otimes S{b}$"
+                    )
+                elif qubit_idx == 2:
+                    label = (
+                        f"$I \\otimes I \\otimes S{b}$"
+                        if a == "I"
+                        else f"$\\sigma^{a}_{qubit_idx} \\otimes I \\otimes S{b}$"
+                    )
+                else:
+                    raise ValueError(f"Invalid qubit index: {qubit_idx}")
+                if label in seen:  # duplicate
                     continue
                 seen.add(label)
                 if qubit_idx == 1:
-                    op = jnp.kron(jnp.kron(sigma_a, I2), S_b)
+                    op = _tensor_product_all([sigma_a, I2, S_b])
                 else:
-                    op = jnp.kron(jnp.kron(I2, sigma_a), S_b)
+                    op = _tensor_product_all([I2, sigma_a, S_b])
                 generators.append(op)
                 labels.append(label)
 
@@ -78,7 +91,7 @@ def build_qudit_mediated_basis(d_qudit: int):
 
 
 def build_swap_qudit_target(d_qudit: int) -> jax.Array:
-    """SWAP ⊗ I_d: SWAP on the two qubits, identity on the qudit."""
+    """SWAP (x) I_d: SWAP on the two qubits, identity on the qudit."""
     U_swap = jnp.zeros((4, 4), dtype=jnp.complex64)
     for i in range(2):
         for j in range(2):
@@ -86,31 +99,36 @@ def build_swap_qudit_target(d_qudit: int) -> jax.Array:
     return jnp.kron(U_swap, jnp.eye(d_qudit, dtype=jnp.complex64))
 
 
+def _tensor_product_all(ops):
+    from math import prod
+
+    n = len(ops)
+
+    inputs = []
+    outputs = []
+
+    for k in range(n):
+        i = 2 * k
+        j = 2 * k + 1
+        inputs.extend((ops[k], [i, j]))  # (A, (0, 1)), (B, (2, 3)
+        outputs.append(i)
+
+    for k in range(n):
+        outputs.append(2 * k + 1)
+
+    # def _scan_product(carry, op):
+    #     return carry * op.shape[0], _
+
+    # dimension, _ = jax.lax.scan(_scan_product, 1, ops)
+    dimension = prod(op.shape[0] for op in ops)
+
+    return jnp.einsum(*inputs, outputs).reshape(dimension, dimension)
+
+
 def hamiltonian_generators_spin_mediated(n_qubits=2, mediator_dimension: int = 2):
     generators = []
     labels = []
     spin_operators = generate_spin_operators(mediator_dimension)
-
-    def tensor_product_all(ops):
-        from math import prod
-
-        n = len(ops)
-
-        inputs = []
-        outputs = []
-
-        for k in range(n):
-            i = 2 * k
-            j = 2 * k + 1
-            inputs.extend((ops[k], [i, j]))  # (A, (0, 1)), (B, (2, 3)
-            outputs.append(i)
-
-        for k in range(n):
-            outputs.append(2 * k + 1)
-
-        dimension = prod(op.shape[0] for op in ops)
-
-        return jnp.einsum(*inputs, outputs).reshape(dimension, dimension)
 
     for qubit in range(n_qubits):
         for p_label, pauli in pauli_operators.items():
@@ -126,7 +144,7 @@ def hamiltonian_generators_spin_mediated(n_qubits=2, mediator_dimension: int = 2
                         "I_2" if p_label == "I" else "\\sigma^" + p_label
                     )
 
-                    generators.append(tensor_product_all(operators))
+                    generators.append(_tensor_product_all(operators))
                     labels.append("$" + " \\otimes ".join(cur_labels) + "$")
     return jnp.stack(generators), labels
 
@@ -134,8 +152,10 @@ def hamiltonian_generators_spin_mediated(n_qubits=2, mediator_dimension: int = 2
 @jax.jit
 def gate_fidelity(U, V):
     d = U.shape[-1]
-    overlap = jnp.einsum("...ij,...ij->", jnp.conj(U), V)
-    return (jnp.abs(overlap) ** 2 + d) / (d * (d + 1))
+    overlap = jnp.einsum(
+        "...ij,...ij->", jnp.conj(U), V
+    )  # hilbert schmidt inner product
+    return (jnp.abs(overlap) ** 2 + d) / (d * (d + 1))  # average gate fidelity
 
 
 def evolve_H(
@@ -165,6 +185,54 @@ def evolve_H(
     return U_prefix[-1]
 
 
+def evolve_H_trotter(
+    coupling_strengths: jax.Array,
+    generators: jax.Array,
+    time,
+) -> jax.Array:
+    """Trotterized evolution: generators applied sequentially per time step.
+
+    U = prod_t prod_j exp(-i * omega_j(t) * G_j * dt)
+
+    Each generator acts independently per sub-step, so bounding each
+    |omega_j| <= 1 (e.g. via cosine parameterization) bounds the
+    per-generator interaction strength.
+    """
+    d = generators.shape[1]
+    dt = time / coupling_strengths.shape[0]
+
+    def single_trotter_step(omega_t):
+        def apply_gen(U, gen_omega):
+            g, w = gen_omega
+            return jax.scipy.linalg.expm(-1j * w * g * dt) @ U, None
+
+        U_step, _ = jax.lax.scan(
+            apply_gen, jnp.eye(d, dtype=generators.dtype), (generators, omega_t)
+        )
+        return U_step
+
+    U_steps = jax.vmap(single_trotter_step)(coupling_strengths)
+    U_total = jax.lax.associative_scan(lambda u0, u1: u1 @ u0, U_steps)
+    return U_total[-1]
+
+
+def normalize_op_norm(generators: jax.Array, target_norm: float = 1.0):
+    """Return a normalize_fn that projects ||H(t)||_op = target_norm per time step.
+
+    H(t) = sum_j omega_j(t) G_j.  Rescales omega at each t so the operator
+    norm (max |eigenvalue| of the Hermitian H) equals target_norm.
+    """
+
+    def _normalize(thetas: jax.Array) -> jax.Array:
+        H = jnp.einsum("tj,jkl->tkl", thetas, generators)  # (M, d, d)
+        eigvals = jax.vmap(jnp.linalg.eigvalsh)(H)  # (M, d)  real eigenvalues
+        norms = jnp.max(jnp.abs(eigvals), axis=-1)  # (M,)
+        scale = target_norm / jnp.maximum(norms, 1e-10)  # (M,)
+        return thetas * scale[:, None]
+
+    return _normalize
+
+
 def optimize_gate(
     generators: jax.Array,
     U_target: jax.Array,
@@ -175,15 +243,27 @@ def optimize_gate(
     lr=0.01,
     initial_scale=1.0,
     seed=42,
+    normalize_fn=None,
+    evolve_fn=None,
 ):
     optimizer = optax.adam(lr)
+    if normalize_fn is None:
+        normalize_fn = normalize_op_norm(generators)
+    if evolve_fn is None:
+        evolve_fn = evolve_H
 
     def loss_fun(thetas: jax.Array):
-        # Cosine reparametrisation: omega_j = cos(theta_j) ∈ [-1, 1], smooth and unconstrained
-        U = evolve_H(jnp.cos(thetas), generators, time)
+        U = evolve_fn(normalize_fn(thetas), generators, time)
         return 1.0 - gate_fidelity(U, U_target)
 
     def single_restart(key):
+        # currently this is not trotterized, so we either need to convert to trotterized form,
+        # which can be done by instead of having a thetas be (n_steps, n_generators), it is theta(n_steps, generator_id)=coupling strength
+        # we then have to map that into evolve_H, one hot style
+        #
+        # another potential way (easier, TODO: first)
+        # is to bound the entire norm by 1
+        # Frobenius vs. Operator TBD, but this is easy enough to change in sim
         thetas = initial_scale * jax.random.normal(key, (n_steps, generators.shape[0]))
         opt_state = optimizer.init(thetas)
 
@@ -196,7 +276,7 @@ def optimize_gate(
         (final_thetas, _), losses = lax.scan(
             step, (thetas, opt_state), None, length=epochs
         )
-        return jnp.cos(final_thetas), losses
+        return normalize_fn(final_thetas), losses
 
     keys = jax.random.split(jax.random.PRNGKey(seed), n_restarts)
     all_params, all_losses = jax.vmap(single_restart)(keys)  # (n_restarts, epochs)
@@ -232,10 +312,16 @@ def sweep_fidelity(
 
 
 if __name__ == "__main__":
-    import argparse, os, glob
+    import argparse
+    import glob
+    import os
 
     parser = argparse.ArgumentParser(description="Qudit-mediated SWAP GRAPE sweep")
-    parser.add_argument("--mode", choices=["run", "aggregate", "check", "analyze"], default="run")
+    parser.add_argument(
+        "--mode",
+        choices=["run", "aggregate", "check", "analyze", "test"],
+        default="run",
+    )
     # Physics
     parser.add_argument("--d_qudit", type=int, default=2, choices=[2, 3, 4, 5, 6])
     # Sweep grid
@@ -254,6 +340,17 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=4000)
     parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--normalize",
+        choices=["op_norm", "cosine"],
+        default="op_norm",
+        help="Hamiltonian norm constraint: op_norm (||H||_op=1) or cosine (w_j=cos(t_j))",
+    )
+    parser.add_argument(
+        "--trotter",
+        action="store_true",
+        help="Use Trotterized evolution (sequential per-generator expm per step)",
+    )
     # I/O
     parser.add_argument("--output_dir", type=str, default="results")
     args = parser.parse_args()
@@ -291,6 +388,10 @@ if __name__ == "__main__":
             f"restarts={args.n_restarts}  epochs={args.epochs}"
         )
 
+        norm_fn = (
+            (lambda thetas: jnp.cos(thetas)) if args.normalize == "cosine" else None
+        )
+        evol_fn = evolve_H_trotter if args.trotter else evolve_H
         best_params, fidelity, _best_hist, all_loss_histories = optimize_gate(
             generators,
             U_target,
@@ -300,6 +401,8 @@ if __name__ == "__main__":
             epochs=args.epochs,
             lr=args.lr,
             seed=args.seed,
+            normalize_fn=norm_fn,
+            evolve_fn=evol_fn,
         )
         print(f"[run] done  F={fidelity:.8f}")
 
@@ -316,7 +419,7 @@ if __name__ == "__main__":
             M=args.M,
             n_generators=n_generators,
         )
-        print(f"[run] saved → {out_path}")
+        print(f"[run] saved -> {out_path}")
     # aggregate mode
     elif args.mode == "aggregate":
         import numpy as np
@@ -369,12 +472,12 @@ if __name__ == "__main__":
             T_max=args.T_max,
             n_T=args.n_T,
         )
-        print(f"[aggregate] saved → {out_path}")
+        print(f"[aggregate] saved -> {out_path}")
         data = np.load(out_path, allow_pickle=True)
-        print(f"  T_values shape   : {data['T_values'].shape}")
-        print(f"  fidelities shape : {data['fidelities'].shape}")
-        print(f"  best_omegas shape: {data['best_omegas'].shape}")
-        print(f"  all_loss_hist    : {data['all_loss_histories'].shape}")
+        print(f"\t\tT_values shape:\t{data['T_values'].shape}")
+        print(f"\t\tfidelities shape:\t{data['fidelities'].shape}")
+        print(f"\t\tbest_omegas shape:\t{data['best_omegas'].shape}")
+        print(f"\t\tall_loss_hist:\t{data['all_loss_histories'].shape}")
 
     # analyze mode
     elif args.mode == "analyze":
@@ -400,22 +503,30 @@ if __name__ == "__main__":
         out = dict(T_values=np.array(T_values), U_halves=np.array(U_halves))
 
         if args.d_qudit == 2:
-            # SWAP(q1,anc) ⊗ I(q2) in q1⊗q2⊗anc basis: |i,j,k⟩ → |k,j,i⟩
-            rows = [k*4 + j*2 + i for i in range(2) for j in range(2) for k in range(2)]
-            cols = [i*4 + j*2 + k for i in range(2) for j in range(2) for k in range(2)]
-            U_swap_q1_anc = jnp.zeros((8, 8), dtype=jnp.complex64).at[
-                jnp.array(rows), jnp.array(cols)
-            ].set(1.0)
+            # SWAP(q1,anc) (x) I(q2) in q1 (x) q2 (x) anc basis: |i,j,k> -> |k,j,i>
+            rows = [
+                k * 4 + j * 2 + i for i in range(2) for j in range(2) for k in range(2)
+            ]
+            cols = [
+                i * 4 + j * 2 + k for i in range(2) for j in range(2) for k in range(2)
+            ]
+            U_swap_q1_anc = (
+                jnp.zeros((8, 8), dtype=jnp.complex64)
+                .at[jnp.array(rows), jnp.array(cols)]
+                .set(1.0)
+            )
             half_fids = jax.vmap(lambda U: gate_fidelity(U, U_swap_q1_anc))(U_halves)
             out["half_fidelities_vs_swap_q1_anc"] = np.array(half_fids)
             best_T = float(T_values[jnp.argmax(half_fids)])
-            print(f"[analyze] max half-fidelity vs SWAP(q1,anc)⊗I(q2): "
-                  f"{float(half_fids.max()):.6f}  at T={best_T:.4f}")
+            print(
+                f"[analyze] max half-fidelity vs SWAP(q1,anc) (x) I(q2): "
+                f"{float(half_fids.max()):.6f}  at T={best_T:.4f}"
+            )
 
         elif args.d_qudit == 4:
-            # q1⊗q2⊗anc indexing: |i,j,k⟩ → 8i + 4j + k
-            idx_j0 = jnp.array([8*i + k     for i in range(2) for k in range(4)])
-            idx_j1 = jnp.array([8*i + 4 + k for i in range(2) for k in range(4)])
+            # q1 (x) q2 (x) anc indexing: |i,j,k> -> 8i + 4j + k
+            idx_j0 = jnp.array([8 * i + k for i in range(2) for k in range(4)])
+            idx_j1 = jnp.array([8 * i + 4 + k for i in range(2) for k in range(4)])
 
             def block_analysis(U):
                 V_j0 = U[jnp.ix_(idx_j0, idx_j0)]
@@ -423,13 +534,91 @@ if __name__ == "__main__":
                 return V_j0, jnp.max(jnp.abs(V_j0 - V_j1))
 
             V_halves, block_diffs = jax.vmap(block_analysis)(U_halves)
-            out["V_halves"] = np.array(V_halves)         # (n_T, 8, 8) q1⊗anc unitary
+            out["V_halves"] = np.array(V_halves)  # (n_T, 8, 8) q1 (x) anc unitary
             out["half_block_diffs"] = np.array(block_diffs)  # (n_T,)
             MT_BOUND = 2 * 3 * float(jnp.pi) / 4
-            print(f"[analyze] MT bound 2×3π/4 = {MT_BOUND:.4f}")
-            print(f"[analyze] min block diff {float(block_diffs.min()):.6f}  "
-                  f"at T={float(T_values[jnp.argmin(block_diffs)]):.4f}")
+            print(f"[analyze] MT bound 2*3pi/4 = {MT_BOUND:.4f}")
+            print(
+                f"[analyze] min block diff {float(block_diffs.min()):.6f}  "
+                f"at T={float(T_values[jnp.argmin(block_diffs)]):.4f}"
+            )
 
         out_path = os.path.join(args.output_dir, f"d{args.d_qudit}_analysis.npz")
         np.savez(out_path, **out)
-        print(f"[analyze] saved → {out_path}")
+        print(f"[analyze] saved -> {out_path}")
+
+    # test mode: verify 2-qubit SWAP speed limit under both constraints
+    elif args.mode == "test":
+        import numpy as np
+
+        generators, labels = build_pauli_basis()
+        U_swap = jnp.zeros((4, 4), dtype=jnp.complex64)
+        for i in range(2):
+            for j in range(2):
+                U_swap = U_swap.at[j * 2 + i, i * 2 + j].set(1.0)
+
+        T_star_op = 3 * jnp.pi / 4  # QSL for SWAP with ||H||_op <= 1
+        T_values = jnp.linspace(0.3, 4.0, 15)
+
+        print("[test] 2-qubit SWAP speed limit verification")
+        print(f"[test] {generators.shape[0]} generators, M={args.M}")
+        print(f"[test] restarts={args.n_restarts}, epochs={args.epochs}")
+
+        opt_kwargs = dict(
+            n_restarts=args.n_restarts,
+            epochs=args.epochs,
+            lr=args.lr,
+            seed=args.seed,
+        )
+
+        # op-norm ||H||_op = 1, simultaneous evolution
+        print("\n[test] OP-NORM (||H||_op=1, simultaneous)")
+        print(f"[test] Expected T* = 3pi/4 = {float(T_star_op):.4f}")
+        op_fids = []
+        for T in T_values:
+            _, fid, _, _ = optimize_gate(
+                generators,
+                U_swap,
+                args.M,
+                float(T),
+                normalize_fn=normalize_op_norm(generators, 1.0),
+                evolve_fn=evolve_H,
+                **opt_kwargs,
+            )
+            fid = float(fid)
+            op_fids.append(fid)
+            marker = " <- T*" if abs(float(T) - float(T_star_op)) < 0.15 else ""
+            print(f"  T={float(T):.3f}  F={fid:.6f}{marker}")
+
+        # cosine + Trotterized
+        print("\n[test] COSINE (Trotterized)")
+        trot_fids = []
+        for T in T_values:
+            _, fid, _, _ = optimize_gate(
+                generators,
+                U_swap,
+                args.M,
+                float(T),
+                normalize_fn=lambda thetas: jnp.cos(thetas),
+                evolve_fn=evolve_H_trotter,
+                **opt_kwargs,
+            )
+            fid = float(fid)
+            trot_fids.append(fid)
+            print(f"\t\tT={float(T):.3f}\tF={fid:.6f}")
+
+        print("\n[test] COMPARISON")
+        print(f"\t\t{'T':>6s}\t{'op-norm':>10s}\t{'trot+cos':>10s}")
+        for i, T in enumerate(T_values):
+            print(f"\t\t{float(T):6.3f}\t{op_fids[i]:10.6f}\t{trot_fids[i]:10.6f}")
+
+        os.makedirs(args.output_dir, exist_ok=True)
+        out_path = os.path.join(args.output_dir, "swap_speed_limit_test.npz")
+        np.savez(
+            out_path,
+            T_values=np.array(T_values),
+            op_norm_fidelities=np.array(op_fids),
+            trotter_cosine_fidelities=np.array(trot_fids),
+            T_star_op_norm=float(T_star_op),
+        )
+        print(f"[test] saved -> {out_path}")
