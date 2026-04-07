@@ -190,21 +190,22 @@ def evolve_H_trotter(
     generators: jax.Array,
     time,
 ) -> jax.Array:
-    """Trotterized evolution: generators applied sequentially per time step.
+    """First-order Trotter approximation of simultaneous evolution.
 
-    U = prod_t prod_j exp(-i * omega_j(t) * G_j * dt)
+    U = prod_t prod_j exp(-i * omega_j(t) * G_j * dt),  dt = T/M
 
-    Each generator acts independently per sub-step, so bounding each
-    |omega_j| <= 1 (e.g. via cosine parameterization) bounds the
-    per-generator interaction strength.
+    Each macro step approximates exp(-i * sum_j omega_j G_j * dt) by
+    splitting into n_gen sequential factors of duration dt each.  In the
+    M -> infinity limit this reproduces evolve_H exactly.
     """
     d = generators.shape[1]
     dt = time / coupling_strengths.shape[0]
+    sub_dt = dt
 
     def single_trotter_step(omega_t):
         def apply_gen(U, gen_omega):
             g, w = gen_omega
-            return jax.scipy.linalg.expm(-1j * w * g * dt) @ U, None
+            return jax.scipy.linalg.expm(-1j * w * g * sub_dt) @ U, None
 
         U_step, _ = jax.lax.scan(
             apply_gen, jnp.eye(d, dtype=generators.dtype), (generators, omega_t)
@@ -216,17 +217,16 @@ def evolve_H_trotter(
     return U_total[-1]
 
 
-def normalize_op_norm(generators: jax.Array, target_norm: float = 1.0):
-    """Return a normalize_fn that projects ||H(t)||_op = target_norm per time step.
+def normalize_frob_norm(generators: jax.Array, target_norm: float = 1.0):
+    """Return a normalize_fn that projects ||H(t)||_F = target_norm per time step.
 
-    H(t) = sum_j omega_j(t) G_j.  Rescales omega at each t so the operator
-    norm (max |eigenvalue| of the Hermitian H) equals target_norm.
+    H(t) = sum_j omega_j(t) G_j.  Rescales omega at each t so the Frobenius
+    norm sqrt(trace(H^dagger H)) of the Hermitian H equals target_norm.
     """
 
     def _normalize(thetas: jax.Array) -> jax.Array:
         H = jnp.einsum("tj,jkl->tkl", thetas, generators)  # (M, d, d)
-        eigvals = jax.vmap(jnp.linalg.eigvalsh)(H)  # (M, d)  real eigenvalues
-        norms = jnp.max(jnp.abs(eigvals), axis=-1)  # (M,)
+        norms = jnp.sqrt(jnp.sum(jnp.abs(H) ** 2, axis=(-2, -1)))  # (M,)
         scale = target_norm / jnp.maximum(norms, 1e-10)  # (M,)
         return thetas * scale[:, None]
 
@@ -248,7 +248,7 @@ def optimize_gate(
 ):
     optimizer = optax.adam(lr)
     if normalize_fn is None:
-        normalize_fn = normalize_op_norm(generators)
+        normalize_fn = normalize_frob_norm(generators)
     if evolve_fn is None:
         evolve_fn = evolve_H
 
@@ -342,9 +342,9 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--normalize",
-        choices=["op_norm", "cosine"],
-        default="op_norm",
-        help="Hamiltonian norm constraint: op_norm (||H||_op=1) or cosine (w_j=cos(t_j))",
+        choices=["frob_norm", "cosine"],
+        default="frob_norm",
+        help="Hamiltonian norm constraint: frob_norm (||H||_F=1) or cosine (w_j=cos(t_j))",
     )
     parser.add_argument(
         "--trotter",
@@ -557,7 +557,7 @@ if __name__ == "__main__":
             for j in range(2):
                 U_swap = U_swap.at[j * 2 + i, i * 2 + j].set(1.0)
 
-        T_star_op = 3 * jnp.pi / 4  # QSL for SWAP with ||H||_op <= 1
+        T_star_op = 3 * jnp.pi / 4  # QSL for SWAP with ||H||_op <= 1 (reference)
         T_values = jnp.linspace(0.3, 4.0, 15)
 
         print("[test] 2-qubit SWAP speed limit verification")
@@ -571,23 +571,23 @@ if __name__ == "__main__":
             seed=args.seed,
         )
 
-        # op-norm ||H||_op = 1, simultaneous evolution
-        print("\n[test] OP-NORM (||H||_op=1, simultaneous)")
-        print(f"[test] Expected T* = 3pi/4 = {float(T_star_op):.4f}")
-        op_fids = []
+        # frobenius-norm ||H||_F = 1, simultaneous evolution
+        print("\n[test] FROB-NORM (||H||_F=1, simultaneous)")
+        print(f"[test] Op-norm reference T* = 3pi/4 = {float(T_star_op):.4f}")
+        frob_fids = []
         for T in T_values:
             _, fid, _, _ = optimize_gate(
                 generators,
                 U_swap,
                 args.M,
                 float(T),
-                normalize_fn=normalize_op_norm(generators, 1.0),
+                normalize_fn=normalize_frob_norm(generators, 1.0),
                 evolve_fn=evolve_H,
                 **opt_kwargs,
             )
             fid = float(fid)
-            op_fids.append(fid)
-            marker = " <- T*" if abs(float(T) - float(T_star_op)) < 0.15 else ""
+            frob_fids.append(fid)
+            marker = " <- op T*" if abs(float(T) - float(T_star_op)) < 0.15 else ""
             print(f"  T={float(T):.3f}  F={fid:.6f}{marker}")
 
         # cosine + Trotterized
@@ -608,16 +608,16 @@ if __name__ == "__main__":
             print(f"\t\tT={float(T):.3f}\tF={fid:.6f}")
 
         print("\n[test] COMPARISON")
-        print(f"\t\t{'T':>6s}\t{'op-norm':>10s}\t{'trot+cos':>10s}")
+        print(f"\t\t{'T':>6s}\t{'frob-norm':>10s}\t{'trot+cos':>10s}")
         for i, T in enumerate(T_values):
-            print(f"\t\t{float(T):6.3f}\t{op_fids[i]:10.6f}\t{trot_fids[i]:10.6f}")
+            print(f"\t\t{float(T):6.3f}\t{frob_fids[i]:10.6f}\t{trot_fids[i]:10.6f}")
 
         os.makedirs(args.output_dir, exist_ok=True)
         out_path = os.path.join(args.output_dir, "swap_speed_limit_test.npz")
         np.savez(
             out_path,
             T_values=np.array(T_values),
-            op_norm_fidelities=np.array(op_fids),
+            frob_norm_fidelities=np.array(frob_fids),
             trotter_cosine_fidelities=np.array(trot_fids),
             T_star_op_norm=float(T_star_op),
         )
