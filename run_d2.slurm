@@ -2,7 +2,6 @@
 #SBATCH --job-name=grape_d2
 #SBATCH --account=rmacc-general
 #SBATCH --partition=amilan
-#SBATCH --qos=normal
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=8G
@@ -12,11 +11,12 @@
 #SBATCH --error=logs/d2_%A_%a.err
 
 module purge
-module load uv
+module --ignore_cache load uv
 
-source "$UV_ENVS/grape/bin/activate"
+source $UV_ENVS/grape/bin/activate
 
 export JAX_PLATFORM_NAME=cpu
+export XLA_FLAGS="--xla_cpu_multi_thread_eigen_intra_op_parallelism=1"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 mkdir -p results/d2 logs

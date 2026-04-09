@@ -11,7 +11,7 @@
 #SBATCH --error=logs/d1_agg_%j.err
 
 module purge
-module load uv
+module --ignore_cache load uv
 
 source "$UV_ENVS/grape/bin/activate"
 

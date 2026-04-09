@@ -15,7 +15,7 @@ CONFIG="${CONFIG:-mediator}"
 D_QUDIT="${D_QUDIT:-2}"
 
 module purge
-module load uv
+module --ignore_cache load uv
 
 source "$UV_ENVS/grape/bin/activate"
 

@@ -12,7 +12,7 @@
 #SBATCH --error=logs/d4_tr_%A_%a.err
 
 module purge
-module load uv
+module --ignore_cache load uv
 
 source "$UV_ENVS/grape/bin/activate"
 
