@@ -323,7 +323,14 @@ if __name__ == "__main__":
         default="run",
     )
     # Physics
-    parser.add_argument("--d_qudit", type=int, default=2, choices=[2, 3, 4, 5, 6])
+    parser.add_argument(
+        "--d_qudit",
+        type=int,
+        default=2,
+        choices=[1, 2, 3, 4, 5, 6],
+        help="Mediator dimension. d_qudit=1 means no ancilla: direct "
+        "2-qubit basis (15 sigma_a(x)sigma_b generators) on dim 4.",
+    )
     # Sweep grid
     parser.add_argument(
         "--T_idx",
@@ -378,7 +385,10 @@ if __name__ == "__main__":
         T_values = jnp.linspace(args.T_min, args.T_max, args.n_T)
         T = float(T_values[T_idx])
 
-        generators, labels = build_qudit_mediated_basis(args.d_qudit)
+        if args.d_qudit == 1:
+            generators, labels = build_pauli_basis()
+        else:
+            generators, labels = build_qudit_mediated_basis(args.d_qudit)
         U_target = build_swap_qudit_target(args.d_qudit)
         n_generators = generators.shape[0]
 
@@ -448,7 +458,10 @@ if __name__ == "__main__":
                 )
 
         # Collect generator labels once
-        _, labels = build_qudit_mediated_basis(args.d_qudit)
+        if args.d_qudit == 1:
+            _, labels = build_pauli_basis()
+        else:
+            _, labels = build_qudit_mediated_basis(args.d_qudit)
 
         M_vals = {int(r["M"]) for r in records}
         if len(M_vals) != 1:
@@ -482,6 +495,10 @@ if __name__ == "__main__":
     # analyze mode
     elif args.mode == "analyze":
         import numpy as np
+
+        if args.d_qudit == 1:
+            print("[analyze] d_qudit=1 has no ancilla block structure; nothing to do.")
+            raise SystemExit(0)
 
         sweep_path = os.path.join(args.output_dir, f"d{args.d_qudit}_sweep.npz")
         data = np.load(sweep_path, allow_pickle=True)

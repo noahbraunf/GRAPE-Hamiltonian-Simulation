@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --time=08:00:00
-#SBATCH --array=0-49%5
+#SBATCH --array=0-49
 #SBATCH --output=logs/d4_%A_%a.out
 #SBATCH --error=logs/d4_%A_%a.err
 
