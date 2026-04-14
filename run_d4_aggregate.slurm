@@ -11,6 +11,7 @@
 #SBATCH --error=logs/d4_agg_%j.err
 
 module purge
+module load slurm/alpine
 module --ignore_cache load uv
 
 source "$UV_ENVS/grape/bin/activate"
@@ -28,17 +29,3 @@ python grape-curc-sim.py \
   --mode analyze \
   --d_qudit 4 \
   --output_dir results/d4_frobnorm
-
-# --- trotter+cosine results ---
-python grape-curc-sim.py \
-  --mode aggregate \
-  --d_qudit 4 \
-  --T_min 0.3 --T_max 15.0 --n_T 20 \
-  --n_restarts 50 \
-  --epochs 4000 \
-  --output_dir results/d4_trotter
-
-python grape-curc-sim.py \
-  --mode analyze \
-  --d_qudit 4 \
-  --output_dir results/d4_trotter

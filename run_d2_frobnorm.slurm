@@ -12,6 +12,7 @@
 #SBATCH --error=logs/d2_fr_%A_%a.err
 
 module purge
+module load slurm/alpine
 module --ignore_cache load uv
 
 source "$UV_ENVS/grape/bin/activate"

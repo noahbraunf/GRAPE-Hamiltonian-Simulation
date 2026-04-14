@@ -217,16 +217,16 @@ def evolve_H_trotter(
     return U_total[-1]
 
 
-def normalize_frob_norm(generators: jax.Array, target_norm: float = 1.0):
-    """Return a normalize_fn that projects ||H(t)||_F = target_norm per time step.
+def normalize_frob_norm(target_norm: float = 1.0):
+    """Return a normalize_fn that projects ||omega(t)||_2 = target_norm per time step.
 
-    H(t) = sum_j omega_j(t) G_j.  Rescales omega at each t so the Frobenius
-    norm sqrt(trace(H^dagger H)) of the Hermitian H equals target_norm.
+    Rescales the coefficient vector omega at each time step t so that its
+    Euclidean norm equals target_norm.  This constrains the coefficients
+    directly, avoiding eigenvalue scaling artifacts from generator structure.
     """
 
     def _normalize(thetas: jax.Array) -> jax.Array:
-        H = jnp.einsum("tj,jkl->tkl", thetas, generators)  # (M, d, d)
-        norms = jnp.sqrt(jnp.sum(jnp.abs(H) ** 2, axis=(-2, -1)))  # (M,)
+        norms = jnp.sqrt(jnp.sum(jnp.abs(thetas) ** 2, axis=-1))  # (M,)
         scale = target_norm / jnp.maximum(norms, 1e-10)  # (M,)
         return thetas * scale[:, None]
 
@@ -248,7 +248,7 @@ def optimize_gate(
 ):
     optimizer = optax.adam(lr)
     if normalize_fn is None:
-        normalize_fn = normalize_frob_norm(generators)
+        normalize_fn = normalize_frob_norm()
     if evolve_fn is None:
         evolve_fn = evolve_H
 
@@ -598,7 +598,7 @@ if __name__ == "__main__":
                 U_swap,
                 args.M,
                 float(T),
-                normalize_fn=normalize_frob_norm(generators, 1.0),
+                normalize_fn=normalize_frob_norm(1.0),
                 evolve_fn=evolve_H,
                 **opt_kwargs,
             )
