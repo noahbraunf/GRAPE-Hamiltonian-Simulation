@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
-#SBATCH --time=08:00:00
+#SBATCH --time=04:00:00
 #SBATCH --array=0-19
 #SBATCH --output=logs/d4_fr_%A_%a.out
 #SBATCH --error=logs/d4_fr_%A_%a.err
